@@ -6,4 +6,4 @@
 - `e2e/`: Playwright tests.
 - `data/`: the business data the backend starts from. The agent never sees `data/evals/`, which holds the answer key.
 
-Python 3.12 with uv, all in the root `pyproject.toml`. Node 26. The OpenRouter key is `OPENROUTER_API_KEY` in `.env`.
+Python 3.12 with uv, all in the root `pyproject.toml`. Node 24. The OpenRouter key is `OPENROUTER_API_KEY` in `.env`.
