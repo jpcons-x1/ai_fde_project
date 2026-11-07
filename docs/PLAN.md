@@ -195,14 +195,14 @@ Proves the whole product works together, without calling a model, and leaves it 
   - The instructions page shows the instructions.
   - The test calls the API to start a claim, record steps and approve $1,950.00, then checks the page shows the steps and "Waiting for sign-off", signs off in the browser and sees Decided and the payment.
   - The test calls `pay_claim` on a claim waiting for sign-off and gets 403.
-- `README.md` in the product's section and `docs/STATUS.md`: what's built, how to run it, how to reset the queue and how to run the agent.
+- `docs/STATUS.md`: what's built, how to run it, how to reset the queue and how to run the agent. (The plan first said `README.md` too, but the README is the course's own and has no section for the product, so this lives in `docs/STATUS.md` only.)
 
 Success criteria:
 
-- [ ] `npm run e2e` passes, and the dev database is unchanged afterwards
-- [ ] `npm run check` passes in full
-- [ ] With `npm run dev`, the agent decides a claim under $1,000 and one over it from the dashboard, checked with the Playwright MCP server, and the one over $1,000 waits for sign-off
-- [ ] `docs/STATUS.md` describes the pilot as built
+- [x] `npm run e2e` passes, and the dev database is unchanged afterwards
+- [x] `npm run check` passes in full
+- [x] With `npm run dev`, the agent decides a claim under $1,000 and one over it from the dashboard, checked with the Playwright MCP server, and the one over $1,000 waits for sign-off. (Checked in Phase 5 on CLM-1001, approved and paid $420.00, and CLM-1003, approved $3,750.00 and refused payment until Priya Raman signed off. That check used the same servers on ports 8010 and 5180, because an old skeleton backend from an earlier run still held port 8000.)
+- [x] `docs/STATUS.md` describes the pilot as built
 
 ## Not in this plan
 
