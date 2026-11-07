@@ -4,6 +4,8 @@ import json
 import sqlite3
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -16,13 +18,21 @@ from backend.models import (
     Customer,
     Decision,
     Handler,
+    NewDecision,
+    NewPayment,
+    NewSignOff,
+    NewStep,
     Payment,
     Plan,
     Policy,
     PreviousClaim,
     SignOff,
+    StartClaim,
+    Step,
     Text,
 )
+
+INSTRUCTIONS = Path(__file__).resolve().parent / "instructions.md"
 
 
 @asynccontextmanager
@@ -165,3 +175,139 @@ def list_handlers(db: Db) -> list[Handler]:
     """List the claims handlers."""
     rows = db.execute("SELECT data FROM handlers ORDER BY handler_id").fetchall()
     return [Handler(**json.loads(row["data"])) for row in rows]
+
+
+@app.get("/api/instructions", operation_id="get_instructions")
+def get_instructions() -> Text:
+    """Get the agent's instructions."""
+    return Text(text=INSTRUCTIONS.read_text(encoding="utf-8"))
+
+
+def now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def require_status(claim: Claim, status: str) -> None:
+    """Raise 409 unless the claim stands where the operation needs it."""
+    if claim.status != status:
+        raise HTTPException(409, f"Claim {claim.claim_id} is {claim.status}")
+
+
+@app.post("/api/claims/{claim_id}/start", operation_id="start_claim")
+def start_claim(claim_id: str, body: StartClaim, db: Db) -> Claim:
+    """Mark a waiting claim as in progress for an agent run."""
+    require_status(load_claim(db, claim_id), "waiting")
+    db.execute(
+        "UPDATE claims SET status = 'in_progress', thread_id = ? WHERE claim_id = ?",
+        (body.thread_id, claim_id),
+    )
+    db.commit()
+    return load_claim(db, claim_id)
+
+
+@app.post("/api/claims/{claim_id}/release", operation_id="release_claim")
+def release_claim(claim_id: str, db: Db) -> Claim:
+    """Put a claim in progress back in the queue, undecided."""
+    require_status(load_claim(db, claim_id), "in_progress")
+    db.execute("UPDATE claims SET status = 'waiting' WHERE claim_id = ?", (claim_id,))
+    db.commit()
+    return load_claim(db, claim_id)
+
+
+@app.post("/api/claims/{claim_id}/steps", operation_id="record_step")
+def record_step(claim_id: str, body: NewStep, db: Db) -> Step:
+    """Record one step the agent took on a claim."""
+    load_claim(db, claim_id)
+    step = Step(
+        **body.model_dump(),
+        number=db.execute(
+            "SELECT COALESCE(MAX(number), 0) + 1 FROM steps WHERE claim_id = ?",
+            (claim_id,),
+        ).fetchone()[0],
+        created_at=now(),
+    )
+    db.execute(
+        "INSERT INTO steps VALUES (?, ?, ?, ?, ?, ?)",
+        (claim_id, step.number, step.thread_id, step.kind, step.text, step.created_at),
+    )
+    db.commit()
+    return step
+
+
+@app.get("/api/claims/{claim_id}/steps", operation_id="list_steps")
+def list_steps(claim_id: str, db: Db) -> list[Step]:
+    """List the steps the agent took on a claim, in order."""
+    load_claim(db, claim_id)
+    rows = db.execute(
+        "SELECT * FROM steps WHERE claim_id = ? ORDER BY number", (claim_id,)
+    ).fetchall()
+    return [Step(**dict(row)) for row in rows]
+
+
+@app.post("/api/claims/{claim_id}/decision", operation_id="decide_claim")
+def decide_claim(claim_id: str, body: NewDecision, db: Db) -> Claim:
+    """Approve, decline or refer a claim in progress, with the payout and reason."""
+    claim = load_claim(db, claim_id)
+    require_status(claim, "in_progress")
+    if body.payout > claim.amount_claimed:
+        raise HTTPException(422, "The payout is more than the amount claimed")
+    needs_sign_off = body.decision == "approve" and body.payout > approval_limit(db)
+    db.execute(
+        """UPDATE claims SET status = ?, decision = ?, payout = ?, reason = ?,
+           policy_section = ?, decided_at = ? WHERE claim_id = ?""",
+        (
+            "awaiting_signoff" if needs_sign_off else "decided",
+            body.decision,
+            round(body.payout, 2),
+            body.reason,
+            body.policy_section,
+            now(),
+            claim_id,
+        ),
+    )
+    db.commit()
+    return load_claim(db, claim_id)
+
+
+@app.post("/api/claims/{claim_id}/payment", operation_id="pay_claim")
+def pay_claim(claim_id: str, body: NewPayment, db: Db) -> Claim:
+    """Pay the approved payout on a claim."""
+    claim = load_claim(db, claim_id)
+    if claim.decision is None or claim.decision.decision != "approve":
+        raise HTTPException(409, f"Claim {claim_id} is not approved")
+    if claim.payment:
+        raise HTTPException(409, f"Claim {claim_id} is already paid")
+    if claim.status == "awaiting_signoff":
+        raise HTTPException(
+            403,
+            f"A payout over ${claim.payout_approval_limit:,.2f} "
+            "needs a handler's sign-off",
+        )
+    if round(body.amount, 2) != claim.decision.payout:
+        raise HTTPException(
+            409, f"The approved payout is ${claim.decision.payout:,.2f}"
+        )
+    db.execute(
+        "UPDATE claims SET paid_amount = ?, paid_at = ? WHERE claim_id = ?",
+        (claim.decision.payout, now(), claim_id),
+    )
+    db.commit()
+    return load_claim(db, claim_id)
+
+
+@app.post("/api/claims/{claim_id}/sign-off", operation_id="sign_off_claim")
+def sign_off_claim(claim_id: str, body: NewSignOff, db: Db) -> Claim:
+    """Sign off an approval over the limit as a handler, which pays it."""
+    claim = load_claim(db, claim_id)
+    handler = Handler(**fetch(db, "handlers", "handler_id", body.handler_id))
+    require_status(claim, "awaiting_signoff")
+    if not handler.can_approve_over_limit:
+        raise HTTPException(403, f"{handler.name} can't sign off this payout")
+    signed_at = now()
+    db.execute(
+        """UPDATE claims SET status = 'decided', signed_off_by = ?, signed_off_at = ?,
+           paid_amount = payout, paid_at = ? WHERE claim_id = ?""",
+        (handler.handler_id, signed_at, signed_at, claim_id),
+    )
+    db.commit()
+    return load_claim(db, claim_id)

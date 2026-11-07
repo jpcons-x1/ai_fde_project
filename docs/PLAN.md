@@ -113,15 +113,15 @@ Builds the operations that change a claim, and the rules that guard them. This i
 
 Success criteria:
 
-- [ ] A test walks a claim from `waiting` to `in_progress` to `decided` with an approval of $420.00, then pays $420.00, and `get_claim` shows the decision and the payment
-- [ ] A test approves $1,950.00 on a claim, sees `awaiting_signoff`, and `pay_claim` returns 403 with the sign-off message and records no payment
-- [ ] After `sign_off_claim` with `HND-01`, that claim is `decided`, paid $1,950.00, and shows Dana Whitfield's sign-off
-- [ ] A second `pay_claim` on a paid claim returns 409, and so does paying a different amount from the approved payout
-- [ ] `decide_claim` returns 422 for a decline with a payout, a payout above the amount claimed or an unknown decision, and 409 on a claim that isn't in progress
-- [ ] `sign_off_claim` returns 404 for an unknown handler and 409 on a claim that isn't waiting for sign-off
-- [ ] Steps posted to a claim come back from `list_steps` in order
-- [ ] `GET /api/instructions` returns the instructions
-- [ ] `npm run check:python` passes with coverage at 80% or more
+- [x] A test walks a claim from `waiting` to `in_progress` to `decided` with an approval of $420.00, then pays $420.00, and `get_claim` shows the decision and the payment
+- [x] A test approves $1,950.00 on a claim, sees `awaiting_signoff`, and `pay_claim` returns 403 with the sign-off message and records no payment
+- [x] After `sign_off_claim` with `HND-01`, that claim is `decided`, paid $1,950.00, and shows Dana Whitfield's sign-off
+- [x] A second `pay_claim` on a paid claim returns 409, and so does paying a different amount from the approved payout
+- [x] `decide_claim` returns 422 for a decline with a payout, a payout above the amount claimed or an unknown decision, and 409 on a claim that isn't in progress
+- [x] `sign_off_claim` returns 404 for an unknown handler and 409 on a claim that isn't waiting for sign-off
+- [x] Steps posted to a claim come back from `list_steps` in order
+- [x] `GET /api/instructions` returns the instructions
+- [x] `npm run check:python` passes with coverage at 80% or more
 
 ## Phase 3: The UnderCover Agent
 
