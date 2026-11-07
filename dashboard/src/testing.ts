@@ -59,6 +59,7 @@ export function claim(overrides: Partial<Claim> = {}): Claim {
     ],
     status: "waiting",
     thread_id: null,
+    agent_running: false,
     payout_approval_limit: 1000,
     decision: null,
     payment: null,

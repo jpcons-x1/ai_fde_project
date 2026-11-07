@@ -31,7 +31,7 @@ data/*.json, *.md ──seed──> backend (FastAPI + SQLite) <──HTTP──
 | Starting a run from the dashboard | `POST /api/claims/{id}/run` starts `agent.run` in a FastAPI background task | The handlers can start the agent from the screen. The agent still talks to the backend over HTTP, so the rule above holds. |
 | Paying | The agent approves with `decide_claim`, then pays with `pay_claim(amount)`. Over $1,000, `pay_claim` is refused until a handler signs off, and the sign-off releases the payment. | Matches the tech stack (paying is its own operation that takes the amount) and the spec's rule. |
 | Routing in the dashboard | Hash routes (`#/`, `#/claims/CLM-1001`, `#/instructions`), no router library | Three pages. A dependency isn't worth it. |
-| Live updates | Polling every 2 seconds while a claim is in progress | Simple, and easy to test. |
+| Live updates | Polling every 2 seconds while the agent is running on a claim | Simple, and easy to test. |
 
 ### Claim statuses
 
@@ -65,7 +65,7 @@ Every operation has an `operation_id`, a one-line docstring and only required in
 | `POST /api/claims/{claim_id}/decision` | `decide_claim` | agent |
 | `POST /api/claims/{claim_id}/payment` | `pay_claim` | agent |
 | `POST /api/claims/{claim_id}/sign-off` | `sign_off_claim` | dashboard |
-| `POST /api/claims/{claim_id}/release` | `release_claim` | agent |
+| `POST /api/claims/{claim_id}/finish` | `finish_run` | agent |
 | `POST /api/claims/{claim_id}/run` | `run_agent` | dashboard |
 
 `get_policy` returns the policy with its plan's limits and the details of its add-ons, so the agent sees every number the wording refers to in one call.
@@ -107,7 +107,7 @@ Builds the operations that change a claim, and the rules that guard them. This i
 - `decide_claim`: takes the decision, the payout, the reason and the policy section. Only on a claim in progress. The payout must be 0 unless approving, and between 0 and the amount claimed. An approval over the limit moves the claim to `awaiting_signoff`; every other decision moves it to `decided`.
 - `pay_claim`: takes the amount. Refused with 409 if the claim isn't approved, the amount isn't the approved payout or it's already paid. Refused with 403 and the message "A payout over $1,000.00 needs a handler's sign-off" while the claim waits for sign-off.
 - `sign_off_claim`: takes the handler id. Only on a claim waiting for sign-off, and only by a handler who `can_approve_over_limit`. Records the sign-off, makes the payment and moves the claim to `decided`.
-- `release_claim`: `in_progress` back to `waiting`, for a run that ends without a decision.
+- `finish_run`: marks the agent's run on a claim as over, and puts a claim still in progress back to `waiting`. (This replaced `release_claim` during Phase 5: the dashboard needs to know when a run has ended, which is after the decision, once the agent has paid and given its final reply. Each claim has an `agent_running` flag for it.)
 - `get_claim` now includes the decision, the payment and the sign-off.
 - `get_instructions`: serves `backend/instructions.md`, written in this phase. It tells the agent how to work a claim: read the claim, the policy, the claim history and the wording; check the dates, the waiting periods, the exclusions and the documents; work out the payout with section 10 of the wording; record the decision with a reason of two or three sentences and the section; then pay an approved payout.
 
@@ -128,7 +128,7 @@ Success criteria:
 Turns the skeleton agent into one that decides claims, with every step recorded in the backend.
 
 - Tools in `agent/main.py`, each a call to one API operation: `get_claim`, `get_policy`, `get_claim_history`, `get_policy_wording`, `decide_claim` and `pay_claim`. A refused call returns the backend's message to the model as the tool's result, so it can see why the payment was blocked.
-- `run(claim_id, thread_id)`: starts the claim, fetches the instructions from the backend, streams the agent with `stream_mode="updates"`, and posts each tool call, tool result and message as a step. If the run ends without a decision, it releases the claim and records a step that says so. It returns the final reply.
+- `run(claim_id, thread_id)`: starts the claim, fetches the instructions from the backend, streams the agent with `stream_mode="updates"`, and posts each tool call, tool result and message as a step. When the run ends it calls `finish_run`, and if there was no decision it first records a step that says so. It returns the final reply.
 - `agent/__main__.py`: `uv run -m agent CLM-1001` works one claim; `uv run -m agent` works every waiting claim in turn.
 - `run_agent` in the backend: starts `run` in a background task with a new thread id, and returns the thread id.
 - The model stays as in the skeleton: `openai/gpt-6-luna` with low reasoning effort, or `MODEL_NAME`.
@@ -171,18 +171,18 @@ Builds the pages where the handlers read a claim, follow the agent and sign off.
   - The policy: plan, add-ons, trip dates and travelers. The customer: name and earlier claims.
   - The decision, once there is one: the decision as a chip, the payout, the reason, the policy section, and the payment or "Waiting for sign-off".
   - Sign-off, on a claim waiting for it: a choice of handler and a "Sign off and pay" button.
-  - The agent's activity: its steps in order, as tool calls, results and messages. It polls every 2 seconds while the claim is in progress and stops once it isn't.
+  - The agent's activity: its steps in order, as tool calls, results and messages. It polls every 2 seconds while the agent is running on the claim and stops when the run ends.
   - A "Run the agent" button on a waiting claim.
 - The instructions page: the agent's instructions, read only, with no way to edit them.
 
 Success criteria:
 
-- [ ] Vitest tests cover the claim page in each status, the decision panel, sign-off, the activity list and the polling that starts and stops, and the instructions page
-- [ ] In the browser, checked with the Playwright MCP server, CLM-1001 shows its story, items, documents, policy and the earlier claim CLM-0412
-- [ ] After "Run the agent" on a claim, the activity fills in step by step as the agent works, then the decision appears with its reason and section, without reloading the page. This costs a few cents
-- [ ] A claim approved over $1,000 shows "Waiting for sign-off". After choosing a handler and "Sign off and pay", it shows Decided with the payment and the handler's name
-- [ ] `#/instructions` shows the instructions with nothing to edit
-- [ ] `npm run check:ts` passes with coverage at 80% or more
+- [x] Vitest tests cover the claim page in each status, the decision panel, sign-off, the activity list and the polling that starts and stops, and the instructions page
+- [x] In the browser, checked with the Playwright MCP server, CLM-1001 shows its story, items, documents, policy and the earlier claim CLM-0412
+- [x] After "Run the agent" on a claim, the activity fills in step by step as the agent works, then the decision appears with its reason and section, without reloading the page. This costs a few cents
+- [x] A claim approved over $1,000 shows "Waiting for sign-off". After choosing a handler and "Sign off and pay", it shows Decided with the payment and the handler's name
+- [x] `#/instructions` shows the instructions with nothing to edit
+- [x] `npm run check:ts` passes with coverage at 80% or more
 
 ## Phase 6: End-to-end tests and handover
 

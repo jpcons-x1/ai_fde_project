@@ -153,5 +153,5 @@ def run(claim_id: str, thread_id: str, llm: BaseChatModel | None = None) -> str:
     finally:
         if request("GET", f"/api/claims/{claim_id}").json()["status"] == "in_progress":
             record(claim_id, thread_id, "message", NO_DECISION)
-            request("POST", f"/api/claims/{claim_id}/release").raise_for_status()
+        request("POST", f"/api/claims/{claim_id}/finish").raise_for_status()
     return reply

@@ -49,6 +49,7 @@ export interface Claim {
   documents: ClaimDocument[];
   status: Status;
   thread_id: string | null;
+  agent_running: boolean;
   payout_approval_limit: number;
   decision: Decision | null;
   payment: { amount: number; paid_at: string } | null;

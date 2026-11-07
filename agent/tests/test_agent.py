@@ -56,6 +56,7 @@ def test_run_decides_and_pays(backend):
 
     claim = backend.get("/api/claims/CLM-1001").json()
     assert claim["status"] == "decided"
+    assert claim["agent_running"] is False
     assert claim["payment"]["amount"] == 375.0
     steps = backend.get("/api/claims/CLM-1001/steps").json()
     calls = [s["text"].split("(")[0] for s in steps if s["kind"] == "tool_call"]
@@ -95,7 +96,7 @@ def test_payment_over_the_limit_is_blocked(backend):
     )
 
 
-def test_a_run_without_a_decision_releases_the_claim(backend):
+def test_a_run_without_a_decision_puts_the_claim_back(backend):
     replies = [call("get_claim", claim_id="CLM-1001"), AIMessage(content="Not sure.")]
     main.run("CLM-1001", "t-1", stub(*replies))
 

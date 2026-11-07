@@ -16,6 +16,7 @@ CREATE TABLE claims (
     data TEXT NOT NULL,
     status TEXT NOT NULL,
     thread_id TEXT,
+    agent_running INTEGER NOT NULL DEFAULT 0,
     decision TEXT,
     payout REAL,
     reason TEXT,

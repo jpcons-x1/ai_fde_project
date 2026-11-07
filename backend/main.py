@@ -100,6 +100,7 @@ def load_claim(db: sqlite3.Connection, claim_id: str) -> Claim:
         | {
             "status": row["status"],
             "thread_id": row["thread_id"],
+            "agent_running": row["agent_running"],
             "payout_approval_limit": approval_limit(db),
             "decision": decision,
             "payment": payment,
@@ -204,18 +205,24 @@ def start_claim(claim_id: str, body: StartClaim, db: Db) -> Claim:
         return claim
     require_status(claim, "waiting")
     db.execute(
-        "UPDATE claims SET status = 'in_progress', thread_id = ? WHERE claim_id = ?",
+        """UPDATE claims SET status = 'in_progress', thread_id = ?, agent_running = 1
+           WHERE claim_id = ?""",
         (body.thread_id, claim_id),
     )
     db.commit()
     return load_claim(db, claim_id)
 
 
-@app.post("/api/claims/{claim_id}/release", operation_id="release_claim")
-def release_claim(claim_id: str, db: Db) -> Claim:
-    """Put a claim in progress back in the queue, undecided."""
-    require_status(load_claim(db, claim_id), "in_progress")
-    db.execute("UPDATE claims SET status = 'waiting' WHERE claim_id = ?", (claim_id,))
+@app.post("/api/claims/{claim_id}/finish", operation_id="finish_run")
+def finish_run(claim_id: str, db: Db) -> Claim:
+    """End the agent's run on a claim, putting it back in the queue if undecided."""
+    load_claim(db, claim_id)
+    db.execute(
+        """UPDATE claims SET agent_running = 0,
+           status = IIF(status = 'in_progress', 'waiting', status)
+           WHERE claim_id = ?""",
+        (claim_id,),
+    )
     db.commit()
     return load_claim(db, claim_id)
 

@@ -108,10 +108,17 @@ def test_start_needs_a_waiting_claim(client):
     assert response.status_code == 409
 
 
-def test_release(client):
+def test_finish_an_undecided_run(client):
+    assert start(client, "CLM-1001")["agent_running"] is True
+    claim = client.post("/api/claims/CLM-1001/finish").json()
+    assert (claim["status"], claim["agent_running"]) == ("waiting", False)
+
+
+def test_finish_a_decided_run(client):
     start(client, "CLM-1001")
-    assert client.post("/api/claims/CLM-1001/release").json()["status"] == "waiting"
-    assert client.post("/api/claims/CLM-1001/release").status_code == 409
+    decide(client, "CLM-1001")
+    claim = client.post("/api/claims/CLM-1001/finish").json()
+    assert (claim["status"], claim["agent_running"]) == ("decided", False)
 
 
 def test_sign_off_rules(client):

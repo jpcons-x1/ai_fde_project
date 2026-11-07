@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App";
-import { stubApi, summary } from "./testing";
+import { claim, stubApi, summary } from "./testing";
 
 afterEach(() => {
   cleanup();
@@ -86,7 +86,10 @@ describe("the queue", () => {
 
 describe("routing", () => {
   it("opens a claim and the instructions from the address", async () => {
-    stubApi({ "GET /api/claims": queue });
+    stubApi({
+      "GET /api/claims": queue,
+      "GET /api/claims/CLM-1011": claim({ claim_id: "CLM-1011" }),
+    });
     render(<App />);
     await screen.findByText("Tom Okafor");
 

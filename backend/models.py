@@ -67,6 +67,7 @@ class Claim(BaseModel):
     documents: list[Document]
     status: Status
     thread_id: str | None
+    agent_running: bool
     payout_approval_limit: float
     decision: Decision | None
     payment: Payment | None
