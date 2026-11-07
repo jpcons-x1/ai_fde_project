@@ -135,14 +135,14 @@ Turns the skeleton agent into one that decides claims, with every step recorded 
 
 Success criteria:
 
-- [ ] A test with a stub model runs a claim end to end: it reads the claim, the policy, the history and the wording, approves $375.00 and pays it. The claim is `decided` and paid, and the steps show every tool call in order
-- [ ] A test with a stub model that approves $1,950.00 and then calls `pay_claim` sees the 403 message as the tool result, and the claim stays `awaiting_signoff` with no payment
-- [ ] A test with a stub model that never decides leaves the claim `waiting` with a final step saying the run ended without a decision
-- [ ] A test of `run_agent` with a stub model returns a thread id, and the claim ends up decided
-- [ ] A test confirms that no file in `agent/`, apart from its tests, imports `backend` or refers to `data/`
-- [ ] A test confirms that the agent's system prompt is the text from `GET /api/instructions`
-- [ ] With the backend running, `uv run -m agent CLM-1001` decides the claim with the real model, and `GET /api/claims/CLM-1001` shows a decision, a reason of two or three sentences, a policy section and, if approved, a payment. This costs a few cents
-- [ ] `npm run check:python` passes with coverage at 80% or more
+- [x] A test with a stub model runs a claim end to end: it reads the claim, the policy, the history and the wording, approves $375.00 and pays it. The claim is `decided` and paid, and the steps show every tool call in order
+- [x] A test with a stub model that approves $1,950.00 and then calls `pay_claim` sees the 403 message as the tool result, and the claim stays `awaiting_signoff` with no payment
+- [x] A test with a stub model that never decides leaves the claim `waiting` with a final step saying the run ended without a decision
+- [x] A test of `run_agent` with a stub model returns a thread id, and the claim ends up decided
+- [x] A test confirms that no file in `agent/`, apart from its tests, imports `backend` or refers to `data/`
+- [x] A test confirms that the agent's system prompt is the text from `GET /api/instructions`
+- [x] With the backend running, `uv run -m agent CLM-1001` decides the claim with the real model, and `GET /api/claims/CLM-1001` shows a decision, a reason of two or three sentences, a policy section and, if approved, a payment. This costs a few cents
+- [x] `npm run check:python` passes with coverage at 80% or more
 
 ## Phase 4: The dashboard's layout and the queue
 

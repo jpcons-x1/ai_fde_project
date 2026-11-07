@@ -7,9 +7,11 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
+from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 
+from agent import main as agent
 from backend import db as database
 from backend.models import (
     AddOn,
@@ -26,6 +28,7 @@ from backend.models import (
     Plan,
     Policy,
     PreviousClaim,
+    Run,
     SignOff,
     StartClaim,
     Step,
@@ -311,3 +314,12 @@ def sign_off_claim(claim_id: str, body: NewSignOff, db: Db) -> Claim:
     )
     db.commit()
     return load_claim(db, claim_id)
+
+
+@app.post("/api/claims/{claim_id}/run", operation_id="run_agent")
+def run_agent(claim_id: str, background_tasks: BackgroundTasks, db: Db) -> Run:
+    """Start the UnderCover Agent on a waiting claim."""
+    require_status(load_claim(db, claim_id), "waiting")
+    thread_id = str(uuid4())
+    background_tasks.add_task(agent.run, claim_id, thread_id)
+    return Run(thread_id=thread_id)
