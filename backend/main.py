@@ -199,7 +199,10 @@ def require_status(claim: Claim, status: str) -> None:
 @app.post("/api/claims/{claim_id}/start", operation_id="start_claim")
 def start_claim(claim_id: str, body: StartClaim, db: Db) -> Claim:
     """Mark a waiting claim as in progress for an agent run."""
-    require_status(load_claim(db, claim_id), "waiting")
+    claim = load_claim(db, claim_id)
+    if claim.status == "in_progress" and claim.thread_id == body.thread_id:
+        return claim
+    require_status(claim, "waiting")
     db.execute(
         "UPDATE claims SET status = 'in_progress', thread_id = ? WHERE claim_id = ?",
         (body.thread_id, claim_id),
@@ -319,7 +322,7 @@ def sign_off_claim(claim_id: str, body: NewSignOff, db: Db) -> Claim:
 @app.post("/api/claims/{claim_id}/run", operation_id="run_agent")
 def run_agent(claim_id: str, background_tasks: BackgroundTasks, db: Db) -> Run:
     """Start the UnderCover Agent on a waiting claim."""
-    require_status(load_claim(db, claim_id), "waiting")
     thread_id = str(uuid4())
+    start_claim(claim_id, StartClaim(thread_id=thread_id), db)
     background_tasks.add_task(agent.run, claim_id, thread_id)
     return Run(thread_id=thread_id)

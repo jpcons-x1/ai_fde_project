@@ -103,6 +103,7 @@ def test_decide_needs_a_claim_in_progress(client):
 
 def test_start_needs_a_waiting_claim(client):
     start(client, "CLM-1001")
+    assert start(client, "CLM-1001")["thread_id"] == "t-1"
     response = client.post("/api/claims/CLM-1001/start", json={"thread_id": "t-2"})
     assert response.status_code == 409
 

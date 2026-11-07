@@ -157,10 +157,10 @@ Builds the dashboard's frame in the UnderCover brand and the page the handlers s
 
 Success criteria:
 
-- [ ] Vitest tests with a stubbed `fetch` cover the queue table, the status counts, the money format and the routing
-- [ ] In the browser, checked with the Playwright MCP server, `http://localhost:5173/` shows 25 claims, all Waiting, with the right fonts and colors, in light and in dark mode
-- [ ] Clicking CLM-1001 goes to `#/claims/CLM-1001`
-- [ ] `npm run check:ts` passes with coverage at 80% or more
+- [x] Vitest tests with a stubbed `fetch` cover the queue table, the status counts, the money format and the routing
+- [x] In the browser, checked with the Playwright MCP server, `http://localhost:5173/` shows 25 claims, all Waiting, with the right fonts and colors, in light and in dark mode
+- [x] Clicking CLM-1001 goes to `#/claims/CLM-1001`
+- [x] `npm run check:ts` passes with coverage at 80% or more
 
 ## Phase 5: The claim page and the instructions page
 
