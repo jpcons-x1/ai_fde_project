@@ -12,6 +12,10 @@ from agent import connection, dispatcher, harness, improver, service
 from agent.tests.stubs import graph_on
 from backend.main import app
 
+# How long a test waits for a run it let go of to finish: a whole round of claims
+# takes 20 to 60 seconds on a slow machine.
+RUN_TIMEOUT = 120
+
 
 @pytest.fixture(autouse=True)
 def backend(monkeypatch):
@@ -79,6 +83,13 @@ class HeldRun:
 
     working: threading.Event = field(default_factory=threading.Event)
     release: threading.Event = field(default_factory=threading.Event)
+
+    def let_go(self, thread: threading.Thread) -> None:
+        """Release the run and wait for the thread that started it to finish. A run
+        still working when its test ends keeps the service busy for the next one."""
+        self.release.set()
+        thread.join(RUN_TIMEOUT)
+        assert not thread.is_alive()
 
 
 @pytest.fixture

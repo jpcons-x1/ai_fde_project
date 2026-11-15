@@ -101,9 +101,7 @@ def test_a_dispatch_and_an_evaluation_never_run_together(
     refused = agent.post(second, json=body)
     assert refused.status_code == 409
     assert refused.json()["detail"] == RUNNING[first]
-    held_run.release.set()
-    running.join(5)
-    assert not running.is_alive()
+    held_run.let_go(running)
 
 
 def test_the_agent_cant_read_the_scoreboard():

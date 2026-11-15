@@ -228,8 +228,7 @@ def test_one_thing_at_a_time_and_the_refusal_names_it(client, serve_rounds, hold
         "A dispatch is running",
     )
     assert the_round(client)["waiting"]["proposal_id"] == waiting
-    held.release.set()
-    dispatch.join(5)
+    held.let_go(dispatch)
 
     held = hold_runs()
     body = {"evaluation_set": "held_out", "tiny": True, "agents": 5}
@@ -243,8 +242,7 @@ def test_one_thing_at_a_time_and_the_refusal_names_it(client, serve_rounds, hold
         409,
         "An evaluation is running",
     )
-    held.release.set()
-    evaluation.join(5)
+    held.let_go(evaluation)
     assert review(agent, round_, waiting).status_code == 202
 
 
@@ -442,8 +440,7 @@ def test_a_round_in_its_first_evaluations_names_itself_in_a_refusal(
         409,
         "Round 1 is running",
     )
-    held.release.set()
-    starting.join(30)
+    held.let_go(starting)
 
 
 def test_a_round_whose_evaluation_fails_is_stopped_with_its_run(
@@ -455,7 +452,7 @@ def test_a_round_whose_evaluation_fails_is_stopped_with_its_run(
     monkeypatch.setattr(service, "claim_work", broken)
     model = whole_round()
     agent = serve_rounds(model, claim_agents_model())
-    start_round(agent)
+    assert start_round(agent).status_code == 202
 
     round_ = the_round(client)
     assert round_["status"] == "stopped"

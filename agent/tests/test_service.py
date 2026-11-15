@@ -61,9 +61,7 @@ def test_one_run_at_a_time(client, serve, held_run):
     assert refused.json()["detail"] == "A dispatch is running"
     assert latest_dispatch(client)["number"] == 1
 
-    held_run.release.set()
-    first.join(5)
-    assert not first.is_alive()
+    held_run.let_go(first)
     assert latest_dispatch(client)["status"] == "finished"
     assert start_dispatch(agent, 3).status_code == 202
     assert latest_dispatch(client)["number"] == 2

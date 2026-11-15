@@ -29,6 +29,7 @@ export default defineConfig(({ mode }) => ({
   },
   test: {
     environment: "jsdom",
+    maxWorkers: 1,
     env: {
       VITE_SUPABASE_URL: "https://supabase.test",
       VITE_SUPABASE_PUBLISHABLE_KEY: "test-publishable-key",
