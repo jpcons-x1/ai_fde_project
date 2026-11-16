@@ -4,6 +4,7 @@ import type {
   EvaluationSet,
   Improvement,
   Run,
+  Source,
   StepKind,
 } from "../dashboard/src/api";
 import { HANDLERS, signedInAs } from "./handlers";
@@ -41,23 +42,82 @@ async function send(
 export const startClaim = (request: Request, claimId: string, thread: string) =>
   send(request, "POST", `${claimPath(claimId)}/start`, { thread_id: thread });
 
+// Records a step, with the context files a lookup came from, and none for any
+// other step.
 export const recordStep = (
   request: Request,
   claimId: string,
   kind: StepKind,
   content: string,
-) => send(request, "POST", `${claimPath(claimId)}/steps`, { kind, content });
+  sources: Source[] = [],
+) =>
+  send(request, "POST", `${claimPath(claimId)}/steps`, {
+    kind,
+    content,
+    sources,
+  });
 
-export const recordDecision = (
+// Who makes the decisions the tests record, as the claim agent says it.
+const MAKER = "UnderCover Agent, version 1";
+
+interface DecisionRequest {
+  decision: DecisionKind;
+  payout: number;
+  section: string;
+  reason: string;
+  decided_by: string;
+}
+
+const recordDecision = (
   request: Request,
   claimId: string,
-  decision: {
-    decision: DecisionKind;
-    payout: number;
-    section: string;
-    reason: string;
-  },
+  decision: DecisionRequest,
 ) => send(request, "POST", `${claimPath(claimId)}/decision`, decision);
+
+const calculatePayout = (
+  request: Request,
+  claimId: string,
+  payout: { benefit: string; lines: object[]; paid_by_others: number },
+) => send(request, "POST", `${claimPath(claimId)}/payout`, payout);
+
+// Works out the payout on one emergency medical bill, which the backend keeps
+// for the claim's attempt, and returns what it pays.
+async function payoutOnABill(request: Request, claimId: string, bill: number) {
+  const response = await calculatePayout(request, claimId, {
+    benefit: "emergency_medical",
+    lines: [
+      {
+        description: "The covered costs",
+        amount: bill,
+        quantity: 1,
+        kind: "expense",
+        nights: 0,
+        hours: 0,
+      },
+    ],
+    paid_by_others: 0,
+  });
+  const { payout } = (await response.json()) as { payout: number };
+  return payout;
+}
+
+// Records a decision as the claim agent does, with its maker. An approval's
+// payout is worked out first: a bill for the payout alone shows the plan's
+// deductible, and a bill for the payout and the deductible leaves exactly the
+// payout on file.
+export async function decide(
+  request: Request,
+  claimId: string,
+  decision: Omit<DecisionRequest, "decided_by">,
+) {
+  if (decision.decision === "approve") {
+    const deductible =
+      decision.payout -
+      (await payoutOnABill(request, claimId, decision.payout));
+    await payoutOnABill(request, claimId, decision.payout + deductible);
+  }
+  return recordDecision(request, claimId, { ...decision, decided_by: MAKER });
+}
 
 // Asks to pay a claim and returns the backend's answer, which may be a refusal.
 export const askToPay = (request: Request, claimId: string, amount: number) =>

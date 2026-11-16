@@ -12,7 +12,7 @@ from agent import api, dispatcher, harness
 from agent.tests.dispatching import dispatch
 from agent.tests.queue_setup import leave_waiting
 from agent.tests.records import claim_of, model_calls_of, work_times_of
-from agent.tests.stubs import decide, graph_on, stub, swarm
+from agent.tests.stubs import agent_on, approve, decide, stub, swarm
 from backend.tests.dashboard_reads import evaluations
 from backend.tests.run_requests import get_evaluation, latest_dispatch, queue
 
@@ -24,10 +24,10 @@ def test_an_evaluation_through_the_service(client, serve):
     outage = RuntimeError("503: The model is unavailable")
     model = swarm(
         {
-            "CLM-1007-E1": decide("approve", 50.0),
-            "CLM-1015-E1": decide("approve", 300.0),
+            "CLM-1007-E1": approve("CLM-1007", 50.0),
+            "CLM-1015-E1": approve("CLM-1015", 300.0),
             "CLM-1017-E1": decide("decline", 0),
-            "CLM-1020-E1": decide("approve", 1240.0),
+            "CLM-1020-E1": approve("CLM-1020", 1240.0),
             "CLM-1021-E1": [outage, outage],
         }
     )
@@ -44,7 +44,7 @@ def test_an_evaluation_through_the_service(client, serve):
     held = claim_of(client, "CLM-1020-E1")
     assert held["status"] == "waiting_for_sign_off"
     # A copy held for sign-off counts as finished, with nothing left to run.
-    held_state = graph_on(stub(), saver).get_state(harness.thread_of(held))
+    held_state = agent_on(stub(), saver).graph.get_state(harness.thread_of(held))
     assert held_state.created_at is not None
     assert held_state.next == ()
     assert claim_of(client, "CLM-1021-E1")["status"] == "left_for_handler"
@@ -59,8 +59,9 @@ def test_an_evaluation_through_the_service(client, serve):
     seconds = sum(w["seconds"] for i in copies for w in work_times_of(i))
     assert measures["model_cost_per_claim"] == pytest.approx(cost / 5)
     assert measures["seconds_per_claim"] == pytest.approx(seconds / 5)
-    # The claim agents' eight calls, and the check's six: one for each attempt.
-    assert cost == pytest.approx(0.0042 * (8 + 6))
+    # The claim agents' eleven calls, three of them working out the approvals'
+    # payouts, and the check's six: one for each attempt.
+    assert cost == pytest.approx(0.0042 * (11 + 6))
 
 
 def test_a_dispatch_leaves_an_evaluations_copies_alone(client):
@@ -122,7 +123,7 @@ def test_a_copy_still_failing_after_its_tries_is_left_in_progress(client):
     scripts = {copy["claim_id"]: decide("refer", 0) for copy in run["claims"]}
     model = swarm(scripts | {"CLM-1104-E1": [limited] * 3})
     work = partial(
-        harness.work_in_run, new_graph=partial(graph_on, model, InMemorySaver())
+        harness.work_in_run, new_agent=partial(agent_on, model, InMemorySaver())
     )
     reports = dispatcher.work_run(run, work)
 

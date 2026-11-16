@@ -10,7 +10,23 @@ export const statuses = [
 export type Status = (typeof statuses)[number];
 export type DecisionKind = "approve" | "decline" | "refer";
 export type StepKind =
-  "screening" | "tool_call" | "tool_result" | "message" | "reading" | "error";
+  | "screening"
+  | "tool_call"
+  | "tool_result"
+  | "message"
+  | "lookup"
+  | "memory_search"
+  | "memory_save"
+  | "refusal"
+  | "error";
+
+// A context file a lookup came from, with that file's source.
+export interface Source {
+  file: string;
+  system: string;
+  owner: string;
+  reviewed: string;
+}
 
 export interface ClaimSummary {
   claim_id: string;
@@ -36,14 +52,32 @@ export interface ClaimDocument {
   content: string;
 }
 
+export interface CalculationStep {
+  step: string;
+  amount: number;
+}
+
+// How an approval's payout was worked out, as the payout rules gave it.
+export interface Calculation {
+  lines: CalculationStep[];
+  payout: number;
+}
+
 export interface Decision {
   decision: DecisionKind;
   payout: number;
+  // None for a decline or a referral.
+  calculation: Calculation | null;
   section: string;
   reason: string;
+  decided_by: string;
   decided_at: string;
+  // The claims manual's version in force when the decision was made.
+  manual_version: string;
   signed_off_by: string | null;
   signed_off_at: string | null;
+  // Why the Gateway refused to pay the approval, which then waits for sign-off.
+  gateway_refusal: string | null;
 }
 
 export interface Payment {
@@ -117,6 +151,8 @@ export interface Step {
   thread_id: string;
   kind: StepKind;
   content: string;
+  // The context files a lookup came from, and none for any other step.
+  sources: Source[];
   created_at: string;
 }
 

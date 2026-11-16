@@ -84,6 +84,21 @@ def test_a_dispatch_whose_dispatcher_fails_is_stopped(client, serve, monkeypatch
     assert latest_dispatch(client)["status"] == "finished"
 
 
+def test_a_run_whose_context_layer_isnt_answering_stops_with_one_line(client, caplog):
+    def down(version, kind):
+        raise ConnectionError("The context layer isn't answering at http://x/mcp")
+
+    service.app.dependency_overrides[service.claim_agents] = lambda: down
+    try:
+        assert start_dispatch(TestClient(service.app), 3).status_code == 202
+    finally:
+        service.app.dependency_overrides.clear()
+    assert latest_dispatch(client)["status"] == "stopped"
+    assert caplog.messages == [
+        "The run stopped: The context layer isn't answering at http://x/mcp"
+    ]
+
+
 def test_starting_the_service_stops_the_runs_left_running(client, monkeypatch):
     run_id = new_dispatch()["run_id"]
     monkeypatch.setattr(service, "checkpoint_pool", lambda: nullcontext(object()))
@@ -129,10 +144,13 @@ def test_a_run_keeps_its_version_when_another_is_kept_meanwhile(
 
 def test_claim_agents_are_built_on_the_services_pool(monkeypatch):
     pool = object()
-    monkeypatch.setattr(service, "claim_graphs", lambda version, pool: (version, pool))
+    monkeypatch.setattr(
+        service, "claim_graphs", lambda version, kind, pool: (version, kind, pool)
+    )
     app = SimpleNamespace(state=SimpleNamespace(pool=pool))
     request = Request({"type": "http", "app": app})
-    assert service.claim_agents(request)({"number": 2}) == ({"number": 2}, pool)
+    built = service.claim_agents(request)({"number": 2}, "evaluation")
+    assert built == ({"number": 2}, "evaluation", pool)
 
 
 def test_the_service_no_longer_resumes_claims():

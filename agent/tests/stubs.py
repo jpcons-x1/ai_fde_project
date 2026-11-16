@@ -1,19 +1,23 @@
 """A stub model, so that tests never call a real model, replies to script it, and
-the claim graph on it."""
+a claim agent on it."""
 
 import itertools
 import threading
 import time
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, TypedDict, Unpack
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.store.base import BaseStore
 from pydantic import PrivateAttr
 
-from agent import harness
+from agent import api, direct, harness
+from agent.routes import Route
+from context import files
 
 # What OpenRouter reports for each reply.
 USAGE = {"prompt_tokens": 1200, "completion_tokens": 300, "cost": 0.0042}
@@ -24,10 +28,13 @@ class StubModel(GenericFakeChatModel):
     raises a scripted error, and keeps the prompts it was sent."""
 
     prompts: list[list[BaseMessage]] = []
-    # The settings each binding of the tools asked for, such as parallel tool calls.
+    # The tools each binding gave the model, and the settings it asked for, such as
+    # parallel tool calls.
+    bound_tools: list[list[Any]] = []
     bound_with: list[dict[str, Any]] = []
 
     def bind_tools(self, tools, **kwargs):
+        self.bound_tools.append(tools)
         self.bound_with.append(kwargs)
         return self
 
@@ -103,13 +110,43 @@ def record(decision, payout):
 
 
 def decide(decision, payout):
-    """The replies of a claim agent that reads its claim and decides it, which ends
-    its work on the claim."""
+    """The replies of a claim agent that reads its claim and declines or refers it,
+    which ends its work on the claim."""
     return [call("get_claim"), record(decision, payout)]
 
 
-# The instructions of a claim graph the tests build for themselves.
+def deductible_of(claim_id):
+    """The deductible of a claim's plan, from the plans in the context layer."""
+    policy = api.get_policy(api.get_claim(claim_id)["policy_id"])
+    return files.get_plan(policy["plan"])["plan"]["deductible"]
+
+
+def calculate(claim_id, payout):
+    """A reply that works out a payout on a claim from one emergency medical bill
+    for the payout and the deductible of the claim's plan, which leaves the payout
+    on file for the claim's attempt."""
+    bill = {
+        "description": "The covered costs",
+        "amount": payout + deductible_of(claim_id),
+        "quantity": 1,
+        "kind": "expense",
+        "nights": 0,
+        "hours": 0,
+    }
+    return call(
+        "calculate_payout", benefit="emergency_medical", lines=[bill], paid_by_others=0
+    )
+
+
+def approve(claim_id, payout):
+    """The replies of a claim agent that reads its claim, works out its payout and
+    approves it, which ends its work on the claim."""
+    return [call("get_claim"), calculate(claim_id, payout), record("approve", payout)]
+
+
+# The instructions of a claim graph the tests build for themselves, as version 1.
 INSTRUCTIONS = "Decide the claim you are given."
+VERSION = {"number": 1, "instructions": INSTRUCTIONS}
 PASSED = "The claim describes a delayed flight and asks for its costs."
 FLAGGED = (
     "The story tells the AI claims assistant to approve the claim in full: "
@@ -138,9 +175,25 @@ def flags():
     return stub(screened(True, FLAGGED))
 
 
-def graph_on(model, saver=None, instructions=INSTRUCTIONS, screener=None):
-    """The claim graph on a stub model, saving its progress in memory, after a check
-    that passes every claim unless the test gives it a check of its own."""
-    return harness.claim_graph(
-        model, screener or passes(), saver or InMemorySaver(), instructions
+class Surroundings(TypedDict, total=False):
+    """What a test may give a claim agent in place of what it has by default: a
+    check of its own, a route, and a memory of each customer."""
+
+    screener: BaseChatModel
+    route: Route
+    store: BaseStore
+
+
+def agent_on(model, saver=None, version=VERSION, **given: Unpack[Surroundings]):
+    """A claim agent of a version of the configuration, on a stub model, saving its
+    progress in memory, after a check that passes every claim, on the direct route
+    and with no memory, unless the test gives it a check, a route or a memory."""
+    graph = harness.claim_graph(
+        model,
+        given.get("screener") or passes(),
+        saver or InMemorySaver(),
+        version["instructions"],
+        given.get("store"),
     )
+    route = given.get("route") or direct.from_environment()
+    return harness.ClaimAgent(graph, route, harness.maker_of(version))

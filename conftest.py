@@ -8,6 +8,9 @@ import pytest
 from fastapi.testclient import TestClient
 from openrouter import OpenRouter
 
+from agent.direct import CONTEXT_URL
+from agent.gateway import GATEWAY_URL
+from agent.memory import MEMORY_ID
 from backend import agent_service, auth, judge
 from backend.dashboard import DashboardFiles
 from backend.dashboard import mount as dashboard_mount
@@ -31,6 +34,21 @@ def database(tmp_path, monkeypatch):
     monkeypatch.setenv("UNDERCOVER_DB", str(path))
     seed(engine())
     return path
+
+
+@pytest.fixture(autouse=True)
+def no_aws(tmp_path, monkeypatch):
+    """Keep every test away from AWS, a Gateway and the servers running on the
+    laptop: no Gateway, context layer or memory from the environment, and stand-in
+    AWS credentials and a region in place of the AWS CLI's."""
+    ours = (GATEWAY_URL, CONTEXT_URL, MEMORY_ID)
+    for name in (*ours, "AWS_PROFILE", "AWS_SESSION_TOKEN", "AWS_REGION"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "aws-config"))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "aws-credentials"))
 
 
 @pytest.fixture(autouse=True)

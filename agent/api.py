@@ -3,7 +3,7 @@ function for each operation they use. It has no way to the scores, the settings,
 the rounds or the handlers' decisions."""
 
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict, Unpack
 
 from pydantic import BaseModel, Field
 
@@ -12,8 +12,18 @@ from agent.connection import call
 DecisionKind = Literal["approve", "decline", "refer"]
 APPROVE: DecisionKind = "approve"
 REFER: DecisionKind = "refer"
-DocumentName = Literal["policy_wording", "claims_manual"]
-StepKind = Literal["screening", "tool_call", "tool_result", "message", "reading"]
+StepKind = Literal[
+    "screening",
+    "tool_call",
+    "tool_result",
+    "message",
+    "lookup",
+    "memory_search",
+    "memory_save",
+    "refusal",
+]
+# The context files a lookup came from, each with its system, owner and review date.
+Sources = list[dict[str, str]]
 EvaluationSet = Literal["evaluation", "held_out"]
 RunKind = Literal["dispatch", "evaluation"]
 DISPATCH: RunKind = "dispatch"
@@ -104,22 +114,10 @@ def get_screening() -> dict[str, Any]:
     return call("GET", "/screening")
 
 
-def search_documents(query: str) -> list[dict[str, Any]]:
-    return call("GET", "/documents/search", params={"query": query})
-
-
-def read_section(document: DocumentName, number: int) -> dict[str, Any]:
-    return call("GET", f"/documents/{document}/sections/{number}")
-
-
 def calculate_payout(
-    claim_id: str, benefit: Benefit, lines: list[Line], paid_by_others: float
+    claim_id: str, benefit: Benefit, lines: list[dict[str, Any]], paid_by_others: float
 ) -> dict[str, Any]:
-    body = {
-        "benefit": benefit,
-        "lines": [line.model_dump() for line in lines],
-        "paid_by_others": paid_by_others,
-    }
+    body = {"benefit": benefit, "lines": lines, "paid_by_others": paid_by_others}
     return call("POST", f"/claims/{claim_id}/payout", json=body)
 
 
@@ -127,25 +125,36 @@ def start_claim(claim_id: str, thread_id: str) -> dict[str, Any]:
     return call("POST", f"/claims/{claim_id}/start", json={"thread_id": thread_id})
 
 
-def record_step(claim_id: str, kind: StepKind, content: str) -> dict[str, Any]:
-    body = {"kind": kind, "content": content}
+def record_step(
+    claim_id: str, kind: StepKind, content: str, sources: Sources
+) -> dict[str, Any]:
+    body = {"kind": kind, "content": content, "sources": sources}
     return call("POST", f"/claims/{claim_id}/steps", json=body)
 
 
+class DecisionRequest(TypedDict):
+    """A decision to record, with who or what made it."""
+
+    decision: DecisionKind
+    payout: float
+    section: str
+    reason: str
+    decided_by: str
+
+
+# The body's fields as keywords, as the direct route passes a tool's inputs.
 def record_decision(
-    claim_id: str, decision: DecisionKind, payout: float, section: str, reason: str
+    claim_id: str, **request: Unpack[DecisionRequest]
 ) -> dict[str, Any]:
-    body = {
-        "decision": decision,
-        "payout": payout,
-        "section": section,
-        "reason": reason,
-    }
-    return call("POST", f"/claims/{claim_id}/decision", json=body)
+    return call("POST", f"/claims/{claim_id}/decision", json=request)
 
 
 def pay_claim(claim_id: str, amount: float) -> dict[str, Any]:
     return call("POST", f"/claims/{claim_id}/payment", json={"amount": amount})
+
+
+def hold_payment(claim_id: str, reason: str) -> dict[str, Any]:
+    return call("POST", f"/claims/{claim_id}/hold", json={"reason": reason})
 
 
 def fail_claim(claim_id: str, reason: str) -> dict[str, Any]:

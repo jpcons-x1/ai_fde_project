@@ -518,6 +518,7 @@ p {
 
 .status-left_for_handler,
 .step-failed,
+.step-refused,
 .score-miss,
 .grade-F {
   background: var(--raspberry);
@@ -961,21 +962,59 @@ p {
   font-weight: 600;
 }
 
-.step-check {
+/* A step with an icon beside it at the text's size: the security check, a
+   lookup and the memory's searches and saves. */
+.step-marked {
   display: flex;
   align-items: flex-start;
   gap: 6px;
 }
 
-.step-check svg.lucide {
+.step-marked svg.lucide {
   margin-top: 0.2em;
 }
 
-.sections-read {
+.step-sources {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step-text {
+  white-space: pre-wrap;
+}
+
+/* A refusal stands out from the steps around it, with its chip's icon at the
+   chip's text size. */
+.step-refused {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.step:has(.step-refused) {
+  background: color-mix(in srgb, var(--raspberry) 18%, transparent);
+}
+
+/* Everything the agent looked up, grouped by the file it came from. */
+.context-files {
+  display: grid;
+  gap: 16px;
+}
+
+.context-file h3 {
   margin: 0;
+}
+
+.context-file ul {
+  margin: 4px 0 0;
   padding-left: 18px;
   display: grid;
   gap: 4px;
+}
+
+.calculation {
+  margin: 12px 0;
 }
 
 .step code {

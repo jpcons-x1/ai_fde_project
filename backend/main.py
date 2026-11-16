@@ -5,11 +5,12 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException
 from mangum import Mangum
 from sqlalchemy import Connection, RowMapping, insert, select, update
 
 from backend import agent_api, dashboard
+from backend.calculation import attempts_calculation, keep_calculation
 from backend.configuration import router as configuration
 from backend.database import (
     claim_view,
@@ -36,7 +37,7 @@ from backend.dependencies import (
     SignedInHandler,
     senior,
 )
-from backend.documents import search, sections, titles
+from backend.documents import manual_version
 from backend.improvement import router as improvement
 from backend.lookups import CLAIM_NOT_FOUND, current_settings, run_row
 from backend.models import (
@@ -44,9 +45,9 @@ from backend.models import (
     ClaimSummary,
     DecisionKind,
     DecisionRequest,
-    DocumentName,
     FailureRequest,
     Handler,
+    HoldRequest,
     ModelCall,
     ModelCallRequest,
     PaymentRequest,
@@ -55,8 +56,6 @@ from backend.models import (
     Plans,
     Policy,
     PreviousClaim,
-    Section,
-    SectionMatch,
     StartRequest,
     Status,
     Step,
@@ -66,11 +65,17 @@ from backend.models import (
 )
 from backend.money import dollars
 from backend.payout import needs_sign_off, work_out_payout
+from backend.records import check_calculation, check_request
 from backend.round_state import round_row, why_no_claim_starts
 from backend.runs import router as runs
 from backend.views import to_claim, to_summary
 
 ATTEMPTS = 2
+NOT_APPROVED = "Claim {claim_id} has not been approved"
+ALREADY_PAID = "Claim {claim_id} has already been paid"
+NOT_STARTED = "Claim {claim_id} has not been started"
+NOT_IN_PROGRESS = "Claim {claim_id} is not in progress"
+ALREADY_DECIDED = "Claim {claim_id} has already been decided"
 
 
 @asynccontextmanager
@@ -145,7 +150,7 @@ def started_thread(db: Connection, claim_id: str) -> str:
     """Return the thread of a claim that has been started, or raise a 404 or a 409."""
     thread_id = find_claim(db, claim_id)["thread_id"]
     if thread_id is None:
-        raise HTTPException(409, f"Claim {claim_id} has not been started")
+        raise HTTPException(409, NOT_STARTED.format(claim_id=claim_id))
     return thread_id
 
 
@@ -166,17 +171,14 @@ def check_run(db: Connection, run_id: str | None) -> None:
         run_row(db, run_id)
 
 
-def add_step(
-    db: Connection, claim_id: str, thread_id: str, kind: str, content: str
-) -> Step:
+def add_step(db: Connection, claim_id: str, thread_id: str, step: StepRequest) -> Step:
     """Add one step of the agent's work to a claim."""
     query = (
         insert(steps)
         .values(
             claim_id=claim_id,
             thread_id=thread_id,
-            kind=kind,
-            content=content,
+            **step.model_dump(),
             created_at=now(),
         )
         .returning(steps)
@@ -231,30 +233,6 @@ def get_claim_history(customer_id: str, db: Database) -> list[PreviousClaim]:
 
 
 @app.get(
-    "/api/documents/search", operation_id="search_documents", dependencies=[AgentKey]
-)
-def search_documents(
-    query: Annotated[str, Query(min_length=1)], db: Database
-) -> list[SectionMatch]:
-    """Find the sections of the wording and the manual that mention a word or phrase."""
-    return search(db, query)
-
-
-@app.get(
-    "/api/documents/{document}/sections/{number}",
-    operation_id="read_section",
-    dependencies=[AgentKey],
-)
-def read_section(document: DocumentName, number: int, db: Database) -> Section:
-    """Read one section of the policy wording or the claims manual in full."""
-    for section in sections(db, document):
-        if section.number == number:
-            return section
-    title = titles(db)[document].lower()
-    raise HTTPException(404, f"Section {number} of the {title} not found")
-
-
-@app.get(
     "/api/agent/openapi.json",
     operation_id="get_agent_api",
     dependencies=[HandlerOrAgent],
@@ -298,7 +276,7 @@ def start_claim(claim_id: str, request: StartRequest, db: Database) -> Claim:
 def record_step(claim_id: str, request: StepRequest, db: Database) -> Step:
     """Record one step of the agent's work on a claim."""
     thread_id = started_thread(db, claim_id)
-    return add_step(db, claim_id, thread_id, request.kind, request.content)
+    return add_step(db, claim_id, thread_id, request)
 
 
 @app.post(
@@ -367,15 +345,19 @@ def list_steps(claim_id: str, db: Database) -> list[Step]:
     dependencies=[AgentKey],
 )
 def record_decision(claim_id: str, request: DecisionRequest, db: Database) -> Claim:
-    """Record a claim's decision once; an approval waits to be paid or signed off."""
+    """Record a claim's decision once, as section 14 asks; approvals await payment."""
+    check_request(request)
     claim = find_claim(db, claim_id)
-    payout = round(request.payout, 2)
+    payout = request.payout
     if claim["decision"] is not None:
         if (claim["decision"], claim["payout"]) == (request.decision, payout):
             return to_claim(claim)
-        raise HTTPException(409, f"Claim {claim_id} has already been decided")
+        raise HTTPException(409, ALREADY_DECIDED.format(claim_id=claim_id))
     if claim["status"] != Status.IN_PROGRESS:
-        raise HTTPException(409, f"Claim {claim_id} is not in progress")
+        raise HTTPException(409, NOT_IN_PROGRESS.format(claim_id=claim_id))
+    calculation = None
+    if request.decision == DecisionKind.APPROVE:
+        calculation = check_calculation(payout, attempts_calculation(db, claim))
     limit = approval_limit(db)
     db.execute(
         insert(decisions).values(
@@ -384,7 +366,10 @@ def record_decision(claim_id: str, request: DecisionRequest, db: Database) -> Cl
             payout=payout,
             section=request.section,
             reason=request.reason,
+            decided_by=request.decided_by,
             decided_at=now(),
+            manual_version=manual_version(db),
+            calculation=calculation and calculation.model_dump(),
             approval_limit=limit,
         )
     )
@@ -401,9 +386,16 @@ def record_decision(claim_id: str, request: DecisionRequest, db: Database) -> Cl
     dependencies=[AgentKey],
 )
 def calculate_payout(claim_id: str, request: PayoutRequest, db: Database) -> Payout:
-    """Work out an approval's payout with UnderCover's payout rules; records nothing."""
-    policy = find_policy(db, to_claim(find_claim(db, claim_id)).policy_id)
-    return work_out_payout(policy, plans(db), request, approval_limit(db))
+    """Work out and keep an approval's payout with UnderCover's payout rules."""
+    claim = to_claim(find_claim(db, claim_id))
+    if claim.thread_id is None:
+        raise HTTPException(409, NOT_STARTED.format(claim_id=claim_id))
+    if claim.status != Status.IN_PROGRESS:
+        raise HTTPException(409, NOT_IN_PROGRESS.format(claim_id=claim_id))
+    policy = find_policy(db, claim.policy_id)
+    payout = work_out_payout(policy, plans(db), request, approval_limit(db))
+    keep_calculation(db, claim_id, claim.thread_id, payout)
+    return payout
 
 
 @app.post(
@@ -417,11 +409,11 @@ def pay_claim(claim_id: str, request: PaymentRequest, db: Database) -> Claim:
         raise HTTPException(403, over_the_limit(limit))
     claim = find_claim(db, claim_id)
     if claim["decision"] != DecisionKind.APPROVE:
-        raise HTTPException(409, f"Claim {claim_id} has not been approved")
+        raise HTTPException(409, NOT_APPROVED.format(claim_id=claim_id))
     if claim["paid_at"] is not None:
         if amount == claim["amount"]:
             return to_claim(claim)
-        raise HTTPException(409, f"Claim {claim_id} has already been paid")
+        raise HTTPException(409, ALREADY_PAID.format(claim_id=claim_id))
     if claim["status"] == Status.WAITING_FOR_SIGN_OFF:
         raise HTTPException(403, over_the_limit(claim["approval_limit"]))
     if amount != claim["payout"]:
@@ -429,6 +421,27 @@ def pay_claim(claim_id: str, request: PaymentRequest, db: Database) -> Claim:
             422, f"The amount must be the approved payout of {dollars(claim['payout'])}"
         )
     record_payment(db, claim)
+    return to_claim(find_claim(db, claim_id))
+
+
+@app.post(
+    "/api/claims/{claim_id}/hold", operation_id="hold_payment", dependencies=[AgentKey]
+)
+def hold_payment(claim_id: str, request: HoldRequest, db: Database) -> Claim:
+    """Hold an approval the Gateway refused to pay for a handler's sign-off."""
+    claim = find_claim(db, claim_id)
+    if claim["decision"] != DecisionKind.APPROVE:
+        raise HTTPException(409, NOT_APPROVED.format(claim_id=claim_id))
+    if claim["paid_at"] is not None:
+        raise HTTPException(409, ALREADY_PAID.format(claim_id=claim_id))
+    if claim["status"] == Status.WAITING_FOR_SIGN_OFF:
+        return to_claim(claim)
+    db.execute(
+        update(decisions)
+        .where(decisions.c.claim_id == claim_id)
+        .values(gateway_refusal=request.reason)
+    )
+    set_status(db, claim_id, Status.WAITING_FOR_SIGN_OFF)
     return to_claim(find_claim(db, claim_id))
 
 
@@ -458,10 +471,11 @@ def fail_claim(claim_id: str, request: FailureRequest, db: Database) -> Claim:
     """Put a failed claim back in the queue, or leave it for a handler after two."""
     claim = find_claim(db, claim_id)
     if claim["status"] != Status.IN_PROGRESS:
-        raise HTTPException(409, f"Claim {claim_id} is not in progress")
+        raise HTTPException(409, NOT_IN_PROGRESS.format(claim_id=claim_id))
     if claim["decision"] is not None:
-        raise HTTPException(409, f"Claim {claim_id} has already been decided")
-    add_step(db, claim_id, claim["thread_id"], "error", request.reason)
+        raise HTTPException(409, ALREADY_DECIDED.format(claim_id=claim_id))
+    error = StepRequest(kind="error", content=request.reason, sources=[])
+    add_step(db, claim_id, claim["thread_id"], error)
     status = (
         Status.LEFT_FOR_HANDLER if claim["attempts"] >= ATTEMPTS else Status.WAITING
     )
