@@ -30,6 +30,7 @@ def context_at(no_aws, context_layer, monkeypatch):
     monkeypatch.setenv(CONTEXT_URL, context_layer)
     return context_layer
 
+
 # How long a test waits for a run it let go of to finish: a whole round of claims
 # takes 20 to 60 seconds on a slow machine.
 RUN_TIMEOUT = 120
