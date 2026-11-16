@@ -4,7 +4,6 @@ import {
   payClaim,
   decide,
   recordStep,
-  reviews,
   startClaim,
   started,
 } from "./api";
@@ -155,7 +154,7 @@ test("the claim page shows every kind of step, the context used and the whole re
   ).toBeVisible();
 });
 
-test("a sign-off on the dashboard pays the held payout", async ({
+test("a sign-off on the dashboard pays the held payout and asks the agent to resume the claim", async ({
   page,
   request,
 }) => {
@@ -168,7 +167,7 @@ test("a sign-off on the dashboard pays the held payout", async ({
   });
   const refused = await askToPay(request, "CLM-1020", 1350);
   expect(refused.status()).toBe(403);
-  const before = [await started(request), await reviews(request)];
+  const before = await started(request);
 
   await page.goto("/claims/CLM-1020");
   const heading = page.locator(".page-header");
@@ -180,7 +179,10 @@ test("a sign-off on the dashboard pays the held payout", async ({
     page.getByText(/^Paid \$1,350\.00, signed off by Dana Whitfield at /),
   ).toBeVisible();
   await expect(page.getByText(/Waiting for the agent/)).toHaveCount(0);
-  expect([await started(request), await reviews(request)]).toEqual(before);
+  expect(await started(request)).toEqual([
+    ...before,
+    { operation: "resume_claim", claim_id: "CLM-1020" },
+  ]);
 });
 
 test.describe("signed in as Marcus Oyelaran", () => {
@@ -204,7 +206,7 @@ test.describe("signed in as Marcus Oyelaran", () => {
     ).toBeVisible();
     await expect(
       page.getByText(
-        "Only a handler who can sign off payouts over $1,000.00 can sign this off. Marcus Oyelaran can't.",
+        "Only a handler who can sign off payouts over $1,000.00 can sign this off or send it back. Marcus Oyelaran can't.",
       ),
     ).toBeVisible();
     await expect(page.getByRole("button", { name: "Sign off" })).toHaveCount(0);

@@ -1,7 +1,6 @@
-"""Evaluations: the agent's service works copies of a labeled set's claims, and the
+"""Evaluations: the agent works copies of a labeled set's claims, and the
 backend scores them."""
 
-import threading
 from functools import partial
 
 import pytest
@@ -9,7 +8,8 @@ from langchain_core.exceptions import ModelRateLimitError
 from langgraph.checkpoint.memory import InMemorySaver
 
 from agent import api, dispatcher, harness
-from agent.tests.dispatching import dispatch
+from agent.tests.dispatching import dispatch, new_evaluation
+from agent.tests.invoking import ACCEPTED, work_run
 from agent.tests.queue_setup import leave_waiting
 from agent.tests.records import claim_of, model_calls_of, work_times_of
 from agent.tests.stubs import agent_on, approve, decide, stub, swarm
@@ -19,7 +19,7 @@ from backend.tests.run_requests import get_evaluation, latest_dispatch, queue
 TINY = ["CLM-1007", "CLM-1015", "CLM-1017", "CLM-1020", "CLM-1021"]
 
 
-def test_an_evaluation_through_the_service(client, serve):
+def test_an_evaluation_the_app_created_worked_by_the_agent(client, serve):
     before = queue(client)
     outage = RuntimeError("503: The model is unavailable")
     model = swarm(
@@ -32,11 +32,9 @@ def test_an_evaluation_through_the_service(client, serve):
         }
     )
     saver = InMemorySaver()
-    response = serve(model, saver).post(
-        "/api/evaluations",
-        json={"evaluation_set": "evaluation", "tiny": True, "agents": 5},
-    )
-    assert response.status_code == 202
+    agent = serve(model, saver)
+    run_id = new_evaluation("evaluation")["run_id"]
+    assert agent.invoke(work_run(run_id)).json() == ACCEPTED
 
     [listed] = evaluations(client)
     assert (listed["status"], listed["agents"], listed["size"]) == ("finished", 5, 5)
@@ -46,7 +44,7 @@ def test_an_evaluation_through_the_service(client, serve):
     # A copy held for sign-off counts as finished, with nothing left to run.
     held_state = agent_on(stub(), saver).graph.get_state(harness.thread_of(held))
     assert held_state.created_at is not None
-    assert held_state.next == ()
+    assert (held_state.next, held_state.interrupts) == ((), ())
     assert claim_of(client, "CLM-1021-E1")["status"] == "left_for_handler"
 
     evaluation = get_evaluation(client, listed["run_id"])
@@ -66,43 +64,15 @@ def test_an_evaluation_through_the_service(client, serve):
 
 def test_a_dispatch_leaves_an_evaluations_copies_alone(client):
     leave_waiting("CLM-1001")
-    api.create_evaluation("held_out", True, 5)
+    evaluation = new_evaluation()
     client.post("/api/claims/CLM-1104-E1/start", json={"thread_id": "copy-thread"})
+    client.post(f"/api/runs/{evaluation['run_id']}/finish")
     dispatch(swarm({"CLM-1001": decide("refer", 0)}))
 
     assert [c["claim_id"] for c in latest_dispatch(client)["claims"]] == ["CLM-1001"]
     copy = claim_of(client, "CLM-1104-E1")
     assert (copy["status"], copy["thread_id"]) == ("in_progress", "copy-thread")
     assert claim_of(client, "CLM-1106-E1")["status"] == "waiting"
-
-
-RUNNING = {
-    "/api/dispatches": "A dispatch is running",
-    "/api/evaluations": "An evaluation is running",
-}
-
-
-@pytest.mark.parametrize(
-    ("first", "second"),
-    [
-        ("/api/dispatches", "/api/evaluations"),
-        ("/api/evaluations", "/api/dispatches"),
-    ],
-)
-def test_a_dispatch_and_an_evaluation_never_run_together(
-    client, serve, held_run, first, second
-):
-    leave_waiting()
-    agent = serve(stub())
-    body = {"evaluation_set": "held_out", "tiny": True, "agents": 3}
-    running = threading.Thread(target=agent.post, args=(first,), kwargs={"json": body})
-    running.start()
-    assert held_run.working.wait(5)
-
-    refused = agent.post(second, json=body)
-    assert refused.status_code == 409
-    assert refused.json()["detail"] == RUNNING[first]
-    held_run.let_go(running)
 
 
 def test_the_agent_cant_read_the_scoreboard():
@@ -118,7 +88,7 @@ def test_the_agent_cant_read_the_scoreboard():
 
 
 def test_a_copy_still_failing_after_its_tries_is_left_in_progress(client):
-    run = api.create_evaluation("held_out", True, 5)
+    run = new_evaluation()
     limited = ModelRateLimitError("429 Too Many Requests")
     scripts = {copy["claim_id"]: decide("refer", 0) for copy in run["claims"]}
     model = swarm(scripts | {"CLM-1104-E1": [limited] * 3})

@@ -1,12 +1,17 @@
 """The command line, and the model and the checkpoint pool it builds."""
 
+import time
 from contextlib import nullcontext
 
 import pytest
+from langgraph.checkpoint.memory import InMemorySaver
+from psycopg_pool import PoolTimeout
 
 from agent import __main__ as cli
 from agent import harness
 from agent.connection import Refused
+from agent.tests.records import claim_of
+from agent.tests.stubs import agent_on, approve, passes, stub
 from backend.tests.versions import add_version
 
 
@@ -21,7 +26,11 @@ class FakePool:
 
     def __init__(self, conninfo, **settings):
         self.conninfo, self.settings, self.statements = conninfo, settings, []
+        self.waited = None
         self.opened.append(self)
+
+    def wait(self, timeout):
+        self.waited = timeout
 
     def __enter__(self):
         return self
@@ -64,14 +73,24 @@ def test_the_checkpoint_pool_settings(fakes):
         [pool] = FakePool.opened
         assert pool.conninfo == "postgresql://u:p@pooler.example.com/db"
         assert (pool.settings["min_size"], pool.settings["max_size"]) == (1, 4)
-        assert pool.settings["timeout"] == 120
+        assert (pool.settings["timeout"], pool.waited) == (120, 5)
         kwargs = pool.settings["kwargs"]
-        assert (kwargs["autocommit"], kwargs["prepare_threshold"]) == (True, 0)
+        assert (kwargs["autocommit"], kwargs["prepare_threshold"]) == (True, None)
+        assert pool.settings["open"] is True
         assert kwargs["row_factory"] is harness.dict_row
         assert kwargs["options"] == "-c search_path=undercover"
         assert "undercover" in repr(pool.statements[0])
         [saver] = FakeSaver.made
         assert (saver.pool, saver.set_up) == (pool, True)
+
+
+def test_a_pool_that_cant_reach_the_database_gives_up_as_it_opens(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@127.0.0.1:1/db")
+    monkeypatch.setattr(harness, "OPEN_WAIT", 0.5)
+    began = time.monotonic()
+    with pytest.raises(PoolTimeout):
+        harness.open_checkpoint_pool()
+    assert time.monotonic() - began < 15
 
 
 VERSION = {
@@ -86,8 +105,8 @@ def test_each_claim_graph_has_a_saver_of_its_own(fakes, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     built = []
 
-    def claim_graph(llm, screener, saver, instructions, store):
-        built.append((llm, screener, saver, instructions))
+    def claim_graph(llm, screener, saver, instructions, traits):
+        built.append((llm, screener, saver, instructions, traits.pauses))
 
     monkeypatch.setattr(harness, "claim_graph", claim_graph)
     with harness.checkpoint_pool() as pool:
@@ -95,6 +114,7 @@ def test_each_claim_graph_has_a_saver_of_its_own(fakes, monkeypatch):
         new_agent()
         new_agent()
     [first, second] = built
+    assert first[4] is second[4] is True
     assert first[0] is second[0]
     assert first[0].model_name == "google/gemini-3.5-flash-lite"
     assert first[1] is second[1]
@@ -135,6 +155,36 @@ def test_command_line_works_one_claim(monkeypatch, capsys):
     assert capsys.readouterr().err == (
         "CLM-1003  not started: 409: Claim CLM-1003 is not waiting\n"
     )
+
+
+@pytest.mark.parametrize(
+    ("kind", "pauses"), [(None, True), ("dispatch", True), ("evaluation", False)]
+)
+def test_only_an_evaluations_claim_graphs_dont_pause(fakes, monkeypatch, kind, pauses):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    built = []
+    monkeypatch.setattr(
+        harness, "claim_graph", lambda *args: built.append(args[4].pauses)
+    )
+    with harness.checkpoint_pool() as pool:
+        harness.claim_graphs(VERSION, kind, pool)()
+    assert built == [pauses]
+
+
+def test_a_claim_worked_on_the_command_line_pauses_like_a_dispatchs(
+    client, monkeypatch
+):
+    saver = InMemorySaver()
+    model = stub(*approve("CLM-1003", 3750.0))
+    monkeypatch.setattr(cli, "checkpoint_pool", lambda: nullcontext(object()))
+    monkeypatch.setattr(harness, "PostgresSaver", lambda pool: saver)
+    monkeypatch.setattr(
+        harness, "model", lambda named: model if "instructions" in named else passes()
+    )
+    cli.main(["CLM-1003"])
+    claim = claim_of(client, "CLM-1003")
+    assert claim["status"] == "waiting_for_sign_off"
+    assert harness.paused(claim, agent_on(stub(), saver))
 
 
 def test_command_line_says_when_the_context_layer_isnt_answering(monkeypatch, capsys):

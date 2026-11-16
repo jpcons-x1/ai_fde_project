@@ -24,6 +24,8 @@
   --on-header: #ffffff;
   --raised: light-dark(#ffffff, #0b2c37);
   --shadow: light-dark(rgb(7 59 76 / 0.07), rgb(0 0 0 / 0.5));
+  /* What waits on a handler: a held payout, and a note sent back. */
+  --held: color-mix(in srgb, var(--marigold) 22%, var(--panel));
   --sans: "Instrument Sans", system-ui, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, monospace;
 
@@ -492,6 +494,7 @@ p {
 }
 
 .status-in_progress,
+.status-sent_back,
 .decision-refer,
 .run-running,
 .version-under_test,
@@ -828,9 +831,43 @@ p {
    someone to act. */
 .sign-off {
   margin-top: 16px;
-  background: color-mix(in srgb, var(--marigold) 22%, var(--panel));
+  background: var(--held);
   border-radius: 12px;
   padding: 14px 16px;
+}
+
+/* Sign off and Send back side by side, with the note opening below them. */
+.held-answers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.held-answers .action-form {
+  margin: 0;
+}
+
+.held-answers .reason-form {
+  flex-basis: 100%;
+}
+
+/* The decisions sent back, each with the handler's note set apart. */
+.sent-back {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+}
+
+.note {
+  margin: 10px 0 4px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--held);
+  white-space: pre-wrap;
 }
 
 .action-form {
@@ -1325,18 +1362,20 @@ fieldset.panel legend + * {
   gap: 12px;
 }
 
-.reject-form {
+/* A form that asks a handler for a few words: why a proposal is rejected, or what
+   the agent should look at again. */
+.reason-form {
   display: grid;
   gap: 6px;
   max-width: 560px;
 }
 
-.reject-form label {
+.reason-form label {
   font-size: 0.87rem;
   color: var(--muted);
 }
 
-.reject-form textarea {
+.reason-form textarea {
   font: inherit;
   border: none;
   border-radius: 10px;
@@ -1346,7 +1385,7 @@ fieldset.panel legend + * {
   resize: vertical;
 }
 
-.reject-form .button {
+.reason-form .button {
   justify-self: start;
 }
 

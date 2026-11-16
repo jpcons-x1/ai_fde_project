@@ -1,13 +1,20 @@
 """Requests the backend's tests send to play out a round of the improver, as the
-agent's service and the dashboard do."""
+agent and the dashboard do."""
 
 from sqlalchemy import select, update
 
 from backend.database import engine, handler_decisions, runs
 from backend.tests.claim_requests import decide
 from backend.tests.dashboard_reads import read
+from backend.tests.rows import newest_round
 from backend.tests.run_requests import get_evaluation
 from backend.tests.sign_in import DANA, signed_in
+
+# Who each handler signs in as, by their id.
+EMAILS = {
+    "HND-01": DANA,
+    "HND-02": "marcus.oyelaran@undercover.example",
+}
 
 CHANGE = {
     "instructions": "# Working a claim\n\nA rule for stolen phones.\n",
@@ -22,12 +29,30 @@ RECIPE = {
 }
 
 
+ROUNDS = "/api/improvement/rounds"
+
+
+def start_round(client, handler_id="HND-01"):
+    """Start a round as a handler does, and return the start's answer."""
+    return client.post(ROUNDS, headers=signed_in(EMAILS[handler_id]))
+
+
 def create_round(client, handler_id="HND-01"):
-    return client.post("/api/rounds", json={"handler_id": handler_id})
+    """Start a round as a handler does, which the app creates, and return it as
+    the agent reads it, or the start's refusal."""
+    started = start_round(client, handler_id)
+    if started.status_code != 202:
+        return started
+    return client.get(round_path(newest_round()))
 
 
 def round_path(round_id):
     return f"/api/rounds/{round_id}"
+
+
+def fail_round(client, round_id, reason="RuntimeError: The improver broke"):
+    """Stop a round whose work failed, as the agent does."""
+    return client.post(f"{round_path(round_id)}/failure", json={"reason": reason})
 
 
 def propose_change(client, round_id, **change):
@@ -38,12 +63,35 @@ def propose_recipe(client, round_id):
     return client.post(f"{round_path(round_id)}/proposals/recipe", json=RECIPE)
 
 
-def review(client, round_id, proposal_id, verdict="approved", handler_id="HND-01"):
-    reason = "Keep each rule general" if verdict == "rejected" else ""
+def review_path(round_id, proposal_id):
+    return f"{ROUNDS}/{round_id}/proposals/{proposal_id}"
+
+
+def approve(client, round_id, proposal_id, handler_id="HND-01"):
+    """Approve a proposal as a handler does, and return the answer."""
     return client.post(
-        f"{round_path(round_id)}/proposals/{proposal_id}/review",
-        json={"review": verdict, "handler_id": handler_id, "reason": reason},
+        f"{review_path(round_id, proposal_id)}/approval",
+        headers=signed_in(EMAILS[handler_id]),
     )
+
+
+def reject(client, round_id, proposal_id, handler_id="HND-01"):
+    """Reject a proposal as a handler does, with a reason, and return the answer."""
+    return client.post(
+        f"{review_path(round_id, proposal_id)}/rejection",
+        json={"reason": "Keep each rule general"},
+        headers=signed_in(EMAILS[handler_id]),
+    )
+
+
+def review(client, round_id, proposal_id, verdict="approved", handler_id="HND-01"):
+    """Approve or reject a proposal as a handler does on the Improvement page, and
+    return it with its review as the agent reads it, or the refusal."""
+    answer = approve if verdict == "approved" else reject
+    reviewed = answer(client, round_id, proposal_id, handler_id)
+    if reviewed.status_code != 202:
+        return reviewed
+    return client.get(f"{round_path(round_id)}/proposals/{proposal_id}")
 
 
 def approved_change(client, round_id, **change):
@@ -70,9 +118,7 @@ def improvement(client):
 
 
 def stop_round(client, round_id, email=DANA):
-    return client.post(
-        f"/api/improvement/rounds/{round_id}/stop", headers=signed_in(email)
-    )
+    return client.post(f"{ROUNDS}/{round_id}/stop", headers=signed_in(email))
 
 
 def into_round(round_id, *evaluations):

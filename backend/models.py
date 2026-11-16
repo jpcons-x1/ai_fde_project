@@ -1,14 +1,13 @@
 """The shapes of the backend's requests and responses."""
 
 from enum import StrEnum
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal
 
 from pydantic import (
     AfterValidator,
     BaseModel,
     Field,
     StringConstraints,
-    model_validator,
 )
 
 
@@ -18,6 +17,7 @@ class Status(StrEnum):
     WAITING = "waiting"
     IN_PROGRESS = "in_progress"
     WAITING_FOR_SIGN_OFF = "waiting_for_sign_off"
+    SENT_BACK = "sent_back"
     DECIDED = "decided"
     LEFT_FOR_HANDLER = "left_for_handler"
 
@@ -115,7 +115,8 @@ def to_the_cent(amount: float) -> float:
 NO_REASONING_EFFORT = "default"
 
 
-StepKind = Literal[
+# The kinds of step recorded through record_step.
+RecordedStepKind = Literal[
     "screening",
     "tool_call",
     "tool_result",
@@ -126,7 +127,10 @@ StepKind = Literal[
     "refusal",
     "error",
 ]
+# A handler's note on a decision sent back, which only the app records.
+StepKind = RecordedStepKind | Literal["sent_back"]
 MOST_AGENTS = 25
+NOTE_LENGTH = 1000
 Agents = Annotated[
     int, Field(ge=1, le=MOST_AGENTS, description="How many claim agents work at once")
 ]
@@ -166,7 +170,9 @@ class Calculation(BaseModel):
     payout: float
 
 
-class Decision(BaseModel):
+class DecisionRecord(BaseModel):
+    """A decision as claims manual section 14 records it."""
+
     decision: DecisionKind
     payout: float
     calculation: Calculation | None
@@ -175,9 +181,12 @@ class Decision(BaseModel):
     decided_by: str
     decided_at: str
     manual_version: str
+    gateway_refusal: str | None
+
+
+class Decision(DecisionRecord):
     signed_off_by: str | None
     signed_off_at: str | None
-    gateway_refusal: str | None
 
 
 class Payment(BaseModel):
@@ -185,6 +194,14 @@ class Payment(BaseModel):
     paid_at: str
     signed_off_by: str | None
     signed_off_at: str | None
+
+
+class SentBackDecision(DecisionRecord):
+    """A decision a senior handler sent back to the agent, with their note."""
+
+    note: str
+    sent_back_by: str
+    sent_back_at: str
 
 
 class ClaimSummary(BaseModel):
@@ -197,6 +214,7 @@ class ClaimSummary(BaseModel):
     status: Status
     decision: DecisionKind | None
     payout: float | None
+    resuming: bool = Field(description="A resume is working on the claim")
 
 
 class Claim(BaseModel):
@@ -220,6 +238,9 @@ class Claim(BaseModel):
     copy_of: str | None
     decision: Decision | None
     payment: Payment | None
+    sent_back_decisions: list[SentBackDecision] = Field(
+        description="The decisions handlers sent back, oldest first"
+    )
 
 
 class Trip(BaseModel):
@@ -327,10 +348,31 @@ class StartRequest(BaseModel):
 
 
 class StepRequest(BaseModel):
-    kind: StepKind
+    kind: RecordedStepKind
     content: str = Field(min_length=1)
     sources: list[Source] = Field(
         description="The context files a lookup came from, and none for other steps"
+    )
+
+
+class NewStep(BaseModel):
+    """A step the app adds to a claim, recorded by the agent or the app itself."""
+
+    kind: StepKind
+    content: str
+    sources: list[Source]
+
+
+class SendBackRequest(BaseModel):
+    note: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=NOTE_LENGTH),
+    ] = Field(description="What the agent should look at again")
+
+
+class TakeRequest(BaseModel):
+    run_id: str | None = Field(
+        description="The dispatch taking the claim, or null for a resume"
     )
 
 
@@ -485,6 +527,7 @@ class RunDetails(BaseModel):
     model: str
     reasoning_effort: str
     status: RunStatus
+    stopped_because: str | None
     started_at: str
     finished_at: str | None
     seconds: float | None
@@ -624,12 +667,8 @@ class NewNumber(BaseModel):
     number: int
 
 
-class CreateRoundRequest(BaseModel):
-    handler_id: str = Field(description="The handler who started the round")
-
-
-class RoundForService(BaseModel):
-    """A round as the agent's service needs it to work."""
+class RoundForTheAgent(BaseModel):
+    """A round as the agent needs it to work."""
 
     round_id: str
     number: int
@@ -675,19 +714,6 @@ class Proposal(BaseModel):
     rejection_reason: str | None
 
 
-class ReviewRequest(BaseModel):
-    review: Review
-    handler_id: str
-    reason: str = Field(description="Why a proposal was rejected, or empty")
-
-    @model_validator(mode="after")
-    def check_reason(self) -> Self:
-        """A rejection says why, so the improver can take it into account."""
-        if self.review == Review.REJECTED and not self.reason.strip():
-            raise ValueError("A rejection needs a reason")
-        return self
-
-
 class RejectionRequest(BaseModel):
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = (
         Field(description="Why, for the improver to read")
@@ -698,10 +724,6 @@ class ImproverCallRequest(BaseModel):
     input_tokens: int = Field(ge=0)
     output_tokens: int = Field(ge=0)
     cost: float = Field(ge=0, description="In US dollars, as OpenRouter reports it")
-
-
-class StopRoundsRequest(BaseModel):
-    reason: str = Field(min_length=1)
 
 
 class VerdictScores(BaseModel):

@@ -116,6 +116,7 @@ export const statusLabels: Record<Status, string> = {
   waiting: "Waiting",
   in_progress: "In progress",
   waiting_for_sign_off: "Waiting for sign-off",
+  sent_back: "Sent back",
   decided: "Decided",
   left_for_handler: "Left for a handler",
 };
@@ -162,6 +163,12 @@ export const roundStages = Object.keys(stageLabels) as RoundStage[];
 // A verdict's reason in words: the rule names measures such as cost_per_claim.
 export function inWords(reason: string | null): string {
   return (reason ?? "").replaceAll("_", " ");
+}
+
+// Why a run stopped, as a sentence: "Stopped: The agent stopped answering." A
+// reason that already ends with a stop, as an error's message may, keeps it.
+export function stoppedBecause(reason: string): string {
+  return `Stopped: ${reason}${/[.!?]$/.test(reason) ? "" : "."}`;
 }
 
 // Where an open round has got to, such as "First evaluations, 2 of 3", or
