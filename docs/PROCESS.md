@@ -1,17 +1,17 @@
 # Process
 
-`uv sync` and `npm install` at the repo root install everything, including a git pre-commit hook. `npm run dev` starts the backend, the agent's AgentCore app on port 8080 (`agent.entrypoint:app` with uvicorn, reloading as `agent/` changes), the context layer and the dashboard, passing `.env` to the backend and the agent. Stop Lab 1's `agentcore dev` first, which serves on port 8080 too. `npm run build` builds the dashboard into `dashboard/dist`, which the backend then serves beside the API. `npm run seed` rebuilds the database `npm run dev` uses, on Supabase when `DATABASE_URL` is in `.env`. The agent always needs `DATABASE_URL`, where it saves its progress.
+`uv sync` and `npm install` at the repo root install everything, including a git pre-commit hook. `npm run dev` starts the backend, the agent's AgentCore app on port 8080 (`agent.entrypoint:app` with uvicorn, reloading as `agent/` changes), the Copilot's AgentCore app on 127.0.0.1:8081 (`agent.copilot.entrypoint:app`, reloading as `agent/` changes), the context layer and the dashboard, passing `.env` to the backend, the agent and the Copilot. Stop Lab 1's `agentcore dev` first, which serves on port 8080 too. `npm run build` builds the dashboard into `dashboard/dist`, which the backend then serves beside the API. `npm run seed` rebuilds the database `npm run dev` uses, on Supabase when `DATABASE_URL` is in `.env`. The agent and the Copilot always need `DATABASE_URL`, where they save their progress.
 
 `npm run check` runs every check but the end-to-end tests at once with `concurrently`, each one's output shown in one piece, in this order, then the end-to-end tests on their own, since their timeouts need a machine that isn't busy:
 
 - Python: ruff (lint and format), pyright, and pytest with 80% coverage, across the machine's cores with pytest-xdist
 - The server check: the backend imports with only the `server` dependency group installed, in a temporary environment, from uv's cache, that leaves `.venv` alone
 - The context check: the context layer imports with only the `context` dependency group installed, in the same way
-- The runtime check: `runtime.main`, the file AgentCore Runtime starts, imports with only the `runtime` dependency group installed, in the same way
+- The runtime check: `runtime.main` and `runtime.copilot`, the files AgentCore Runtime starts for the agent and the Copilot, import with only the `runtime` dependency group installed, in the same way
 - TypeScript: ESLint, Prettier, tsc, and vitest with 80% coverage
 - Playwright end-to-end tests
 
-The checks need no network and never read `.env`: the tests use SQLite, a stub model, the real context layer on a local port, and stand-ins for the AgentCore Gateway, AgentCore Memory, AgentCore Identity, AgentCore Runtime, Langfuse, the agent, Supabase Auth and the judge. The end-to-end tests sign in through the Auth stand-in with a test password. Tables and connections on Supabase can be checked through the Supabase MCP server, which is read-only.
+The checks need no network and never read `.env`: the tests use SQLite, a stub model, the real context layer on a local port, and stand-ins for the AgentCore Gateway, AgentCore Memory, AgentCore Identity, AgentCore Runtime, Langfuse, the agent, the Copilot, Supabase Auth and the judge. The end-to-end tests sign in through the Auth stand-in with a test password. Tables and connections on Supabase can be checked through the Supabase MCP server, which is read-only.
 
 The pre-commit hook runs the format, lint, type and unit test checks on every commit.
 
@@ -48,7 +48,7 @@ The checks show that the code works, but not that it is fit to merge. Every code
 
 - Add tests with each change. Tests never call a model; use a stub model.
 - Every page needs a signed-in handler. For browser checks with the Playwright MCP server, sign in on `/sign-in` with a handler's email from `data/handlers.json` and `HANDLER_PASSWORD` from `.env`: Dana Whitfield to act, Marcus Oyelaran to see what a handler who can't sign off over the limit sees.
-- Before the live runs with the real model, reseed once with `npm run seed`. Evaluations work their own copies and need no reseed. Keep to the runs the plan asks for: for the context layer, memory and the Gateway, on the direct route with memory off, `uv run -m agent CLM-1001`, then `CLM-1005` and `CLM-1006`, a dispatch at N=25 on the queue page and an evaluation of the evaluation set's five tiny claims, then CLM-1005's and CLM-1006's pages in light and dark mode, and report what they spent from the backend's records and the OpenRouter key's usage.
+- Before the live runs with the real model, reseed once with `npm run seed`. Evaluations work their own copies and need no reseed. Keep to the runs the plan asks for: for the context layer, memory and the Gateway, on the direct route with memory off, `uv run -m agent CLM-1001`, then `CLM-1005` and `CLM-1006`, a dispatch at N=25 on the queue page and an evaluation of the evaluation set's five tiny claims, then CLM-1005's and CLM-1006's pages in light and dark mode; for the Copilot, the conversation in `docs/PLAN_COPILOT.md`'s last phase. Report what they spent from the backend's records and the OpenRouter key's usage.
 - Outside a plan, commit each change once you have checked and reviewed it.
 - Outside a plan, run `npm run check` before you hand work over.
 - Never use `git commit --no-verify`.
